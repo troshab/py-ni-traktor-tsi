@@ -1,0 +1,52 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install package
+        run: pip install -e .
+
+      - name: Smoke test - import
+        run: python -c "from traktor_tsi import parse_tlv, build_tlv, build_cmad_button, CMD_SLOT_MUTE; print('OK')"
+
+      - name: Smoke test - CMAD round-trip
+        run: |
+          python -c "
+          from traktor_tsi.cmad import build_cmad_button, build_cmad_knob, build_cmad_output, parse_cmad
+          for builder in [build_cmad_button, build_cmad_knob, build_cmad_output]:
+              data = builder(target=5)
+              assert len(data) == 120
+              parsed = parse_cmad(data)
+              assert parsed['target'] == 5
+              assert parsed['device_type'] == 4
+          print('CMAD round-trip OK')
+          "
+
+      - name: Smoke test - TLV round-trip
+        run: |
+          python -c "
+          from traktor_tsi.tlv import build_tlv, parse_tlv
+          payload = b'hello world'
+          tlv = build_tlv('TEST', payload)
+          chunks = parse_tlv(tlv)
+          assert chunks[0][0] == 'TEST'
+          assert chunks[0][1] == payload
+          print('TLV round-trip OK')
+          "
