@@ -10,4 +10,8 @@ from traktor_tsi.cmad import build_cmad_knob, build_cmad_button, build_cmad_outp
 from traktor_tsi.tsi import parse_tsi, write_tsi, rebuild_tsi, get_device_info, build_cmai, build_ddcb
 from traktor_tsi.constants import *
 
-__version__ = "0.1.0"
+try:
+    from importlib.metadata import version as _pkg_version
+    __version__ = _pkg_version("py-ni-traktor-tsi")
+except Exception:
+    __version__ = "0.0.0-dev"
