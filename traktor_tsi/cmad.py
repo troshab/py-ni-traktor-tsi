@@ -140,7 +140,7 @@ def build_cmad_modifier(
         cond2_mod, 0, 0, 1,
         0, 1, 7, 0,                        # [22]=7 (modifier max range)
         127, 0, 1, 1,                      # [26]=1 (LED feedback)
-        1, 1,                              # [29]=1 (matches community pattern)
+        1, 0,                              # [28]=output_scale=1, [29]=0 (Override factory map)
     ]
     return struct.pack('>30I', *fields)
 

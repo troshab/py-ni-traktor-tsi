@@ -185,6 +185,16 @@ class TestBuildCmadModifier:
         d = parse_cmad(build_cmad_modifier())
         assert d['output_scale_raw'] == 1
 
+    def test_override_factory_map(self):
+        """Field [29] (offset 116) = 0 for Override Factory Map.
+
+        Bug #6: was 1 (UseFactoryMap=True), causing modifier entries to NOT
+        override the factory mapping. FX Assign buttons triggered native FX
+        assignment instead of setting M1.
+        """
+        d = parse_cmad(build_cmad_modifier())
+        assert d['reserved116'] == 0
+
 
 class TestBuildCmadContinuousButton:
     """Tests for build_cmad_continuous_button (Bug #3 fix)."""
