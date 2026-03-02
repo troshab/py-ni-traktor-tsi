@@ -6,8 +6,8 @@ Merges the DJ NUO Loop In/Out Control mapping with stem parameter
 reset on the Load (Browse.Encoder.Push) button.
 
 When loading a track, all stem parameters (Volume, Filter, FX Amount,
-Mute) for the focused deck reset to defaults. Uses Deck Focus Selector
-(cmd 203) as condition.
+Mute) for the focused deck reset to defaults. Uses NUO's M7/M8
+modifiers (set by Deck Select buttons) as conditions.
 
 Usage:
     python -m examples.s4_mk3_stem_reset_nuo \
@@ -27,13 +27,20 @@ from traktor_tsi import (
     build_cmai, build_ddcb,
     build_cmad_button, build_cmad_continuous_button,
     CMD_SLOT_VOLUME, CMD_SLOT_FILTER, CMD_SLOT_FX_AMOUNT, CMD_SLOT_MUTE,
-    CMD_DECK_FOCUS,
-    slot_target,
+    CMD_MODIFIER_7, CMD_MODIFIER_8, CMD_LOAD_SELECTED,
+    slot_target, deck_target,
 )
 from traktor_tsi.tlv import parse_tlv, find_chunk
 from traktor_tsi.strings import decode_utf16be_str
 
-FOCUS_VAL = {'A': 0, 'B': 1, 'C': 2, 'D': 3}
+# NUO sets M7 from Left Deck Select (A=0, C=1) and M8 from Right (B=0, D=1).
+# We condition stem reset on these modifiers.
+DECK_COND = {
+    'A': (CMD_MODIFIER_7, 0),
+    'C': (CMD_MODIFIER_7, 1),
+    'B': (CMD_MODIFIER_8, 0),
+    'D': (CMD_MODIFIER_8, 1),
+}
 
 LOAD_SIDES = [
     ('Left.Browse.Encoder.Push',  ['A', 'C']),
@@ -99,18 +106,30 @@ def extract_entries(binary: bytes) -> tuple[list[bytes], list[str]]:
 
 
 def generate_stem_reset(start_idx: int) -> tuple[list[bytes], list[str]]:
-    """Generate stem reset mapping entries.
+    """Generate Load + stem reset mapping entries.
 
-    2 sides x 2 decks x 4 slots x (3 continuous + 1 mute) = 64 entries.
-    Each conditioned on Deck Focus matching the target deck.
-    trigger_release=1: fires on button release (after native Load completes).
+    Per side: 1 Load + 2 decks x 4 slots x (3 continuous + 1 mute) = 33 entries.
+    2 sides = 66 entries total.
+
+    Load Selected fires on press (trigger_release=0).
+    Stem reset fires on release (trigger_release=1) after Load completes.
     """
     cmais = []
     names = []
     idx = start_idx
 
     for load_ctrl, decks in LOAD_SIDES:
+        # Explicit Load Selected: fires on press, no condition needed.
+        cmais.append(build_cmai(idx, 0, CMD_LOAD_SELECTED,
+            build_cmad_button(
+                interaction_mode=2,
+                trigger_release=0,
+            )))
+        names.append(load_ctrl)
+        idx += 1
+
         for deck in decks:
+            cond_mod, cond_val = DECK_COND[deck]
             for slot in range(1, 5):
                 tgt = slot_target(deck, slot)
                 # Continuous params: Absolute mode with value_type=2
@@ -121,8 +140,8 @@ def generate_stem_reset(start_idx: int) -> tuple[list[bytes], list[str]]:
                             interaction_mode=3,
                             max_output=default_val,
                             trigger_release=1,
-                            cond1_mod=CMD_DECK_FOCUS,
-                            cond1_val=FOCUS_VAL[deck],
+                            cond1_mod=cond_mod,
+                            cond1_val=cond_val,
                         )))
                     names.append(load_ctrl)
                     idx += 1
@@ -133,8 +152,8 @@ def generate_stem_reset(start_idx: int) -> tuple[list[bytes], list[str]]:
                         interaction_mode=2,
                         max_output=0,
                         trigger_release=1,
-                        cond1_mod=CMD_DECK_FOCUS,
-                        cond1_val=FOCUS_VAL[deck],
+                        cond1_mod=cond_mod,
+                        cond1_val=cond_val,
                     )))
                 names.append(load_ctrl)
                 idx += 1

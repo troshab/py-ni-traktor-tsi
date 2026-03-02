@@ -281,9 +281,10 @@ class TestBuildCmadOutput:
         d = parse_cmad(build_cmad_output(invert=0))
         assert d['invert'] == 0
 
-    def test_trigger_release_default_1(self):
+    def test_trigger_release_default_0(self):
+        """All community TSIs use trigger_release=0 for output entries."""
         d = parse_cmad(build_cmad_output())
-        assert d['trigger_release'] == 1
+        assert d['trigger_release'] == 0
 
     def test_conditions_for_modifier_led(self):
         """Modifier LED: output CMD_MODIFIER_1 with cond M1=col."""

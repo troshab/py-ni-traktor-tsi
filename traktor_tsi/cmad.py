@@ -190,7 +190,7 @@ def build_cmad_output(
     cond1_val: int = 0,
     cond2_mod: int = 0,
     cond2_val: int = 0,
-    trigger_release: int = 1,
+    trigger_release: int = 0,
 ) -> bytes:
     """Build CMAD payload for an LED output entry.
 
@@ -201,7 +201,7 @@ def build_cmad_output(
     makes LED light up only when modifier equals N.
 
     Args:
-        trigger_release: 1=standard for Output entries (update on state change).
+        trigger_release: 0=standard for Output entries (all community TSIs use 0).
     """
     fields = [
         4, 0xFFFF, 8, target,

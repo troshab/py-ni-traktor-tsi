@@ -7,13 +7,13 @@ on the Traktor Kontrol S4 MK3. When loading a track, all stem
 parameters (Volume, Filter, FX Amount, Mute) for the focused deck
 reset to defaults.
 
-Uses Deck Focus Selector (cmd 203) as condition to target only the
-currently focused deck. No modifiers needed.
+Uses M7/M8 modifiers set by Deck Select buttons as conditions:
+  Left.Deck Select.A -> M7=0, Left.Deck Select.C -> M7=1
+  Right.Deck Select.B -> M8=0, Right.Deck Select.D -> M8=1
 
-Uses Reset interaction mode (7) which resets parameters to their
-factory default on button press.
-
-Works alongside native Load function (no Override Factory Map needed).
+Adds explicit Load Selected command (on press) so native Load works
+even when custom mappings are added to Browse.Encoder.Push.
+Stem reset fires on release (after Load completes).
 
 Usage:
     python -m examples.s4_mk3_stem_reset \
@@ -29,16 +29,29 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from traktor_tsi import (
     parse_tsi, write_tsi, rebuild_tsi, get_device_info,
     build_cmai, build_ddcb,
-    build_cmad_button, build_cmad_continuous_button,
+    build_cmad_button, build_cmad_modifier, build_cmad_continuous_button,
     CMD_SLOT_VOLUME, CMD_SLOT_FILTER, CMD_SLOT_FX_AMOUNT, CMD_SLOT_MUTE,
-    CMD_DECK_FOCUS,
-    slot_target,
+    CMD_MODIFIER_7, CMD_MODIFIER_8, CMD_LOAD_SELECTED,
+    slot_target, deck_target,
 )
 
-FOCUS_VAL = {'A': 0, 'B': 1, 'C': 2, 'D': 3}
+# M7 tracks left side focus: A=0, C=1 (set by Deck Select buttons)
+# M8 tracks right side focus: B=0, D=1
+DECK_COND = {
+    'A': (CMD_MODIFIER_7, 0),
+    'C': (CMD_MODIFIER_7, 1),
+    'B': (CMD_MODIFIER_8, 0),
+    'D': (CMD_MODIFIER_8, 1),
+}
 
-# Left Browse.Encoder.Push loads into focused deck on left side (A or C).
-# Right Browse.Encoder.Push loads into focused deck on right side (B or D).
+# Deck Select buttons set M7/M8 to track which deck is focused per side.
+DECK_SELECT_ENTRIES = [
+    ('Left.Deck Select.A',  CMD_MODIFIER_7, 0),
+    ('Left.Deck Select.C',  CMD_MODIFIER_7, 1),
+    ('Right.Deck Select.B', CMD_MODIFIER_8, 0),
+    ('Right.Deck Select.D', CMD_MODIFIER_8, 1),
+]
+
 LOAD_SIDES = [
     ('Left.Browse.Encoder.Push',  ['A', 'C']),
     ('Right.Browse.Encoder.Push', ['B', 'D']),
@@ -57,9 +70,13 @@ CONTINUOUS_RESETS = [
 def generate():
     """Generate all mapping entries.
 
-    2 sides x 2 decks x 4 slots x (3 continuous + 1 mute) = 64 entries.
-    Each conditioned on Deck Focus matching the target deck.
-    trigger_release=1: fires on button release (after native Load completes).
+    4 Deck Select entries (set M7/M8) +
+    Per side: 1 Load + 2 decks x 4 slots x (3 continuous + 1 mute) = 33 entries.
+    Total: 4 + 2x33 = 70 entries.
+
+    Load Selected fires on press (trigger_release=0) to replicate native Load.
+    Stem reset fires on release (trigger_release=1) after Load completes.
+    Each conditioned on M7/M8 matching the target deck.
     """
     cmais = []
     names = []
@@ -71,8 +88,21 @@ def generate():
         names.append(ctrl_name)
         idx += 1
 
+    # Deck Select buttons set M7/M8 to track deck focus per side
+    for ctrl_name, mod_cmd, mod_val in DECK_SELECT_ENTRIES:
+        add(ctrl_name, 0, mod_cmd,
+            build_cmad_modifier(value=mod_val, interaction_mode=3))
+
     for load_ctrl, decks in LOAD_SIDES:
+        # Explicit Load Selected: fires on press, no condition needed.
+        add(load_ctrl, 0, CMD_LOAD_SELECTED,
+            build_cmad_button(
+                interaction_mode=2,
+                trigger_release=0,
+            ))
+
         for deck in decks:
+            cond_mod, cond_val = DECK_COND[deck]
             for slot in range(1, 5):
                 tgt = slot_target(deck, slot)
                 # Continuous params: Absolute mode with value_type=2
@@ -83,8 +113,8 @@ def generate():
                             interaction_mode=3,
                             max_output=default_val,
                             trigger_release=1,
-                            cond1_mod=CMD_DECK_FOCUS,
-                            cond1_val=FOCUS_VAL[deck],
+                            cond1_mod=cond_mod,
+                            cond1_val=cond_val,
                         ))
                 # Mute: Digital button, Direct mode sets to 0 (unmuted)
                 add(load_ctrl, 0, CMD_SLOT_MUTE,
@@ -93,8 +123,8 @@ def generate():
                         interaction_mode=2,
                         max_output=0,
                         trigger_release=1,
-                        cond1_mod=CMD_DECK_FOCUS,
-                        cond1_val=FOCUS_VAL[deck],
+                        cond1_mod=cond_mod,
+                        cond1_val=cond_val,
                     ))
 
     return cmais, names
