@@ -5,6 +5,10 @@ X1 MK2 Stems (trosha_b edition) - TSI mapping generator.
 Turns the Traktor Kontrol X1 MK2 into a dedicated stems controller
 for 4 decks + FX Unit 3/4 controller.
 
+Two modes:
+  - Mute mode (default): bottom 4x4 grid = stem mute toggles
+  - Control mode (FX Assign button): select stems + use encoders for Volume/Filter/FX
+
 Usage:
     python -m examples.x1_mk2_stems --source /path/to/StemsX1MK2.tsi --output /path/to/output.tsi
 
@@ -21,48 +25,105 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from traktor_tsi import (
     parse_tsi, write_tsi, rebuild_tsi, get_device_info,
     build_cmai, build_ddcb,
-    build_cmad_knob, build_cmad_button, build_cmad_output,
+    build_cmad_knob, build_cmad_button, build_cmad_modifier, build_cmad_output,
     CMD_SLOT_VOLUME, CMD_SLOT_FILTER, CMD_SLOT_MUTE, CMD_SLOT_FX_AMOUNT,
     CMD_MODIFIER_1, CMD_MODIFIER_2, CMD_MODIFIER_3,
+    CMD_MODIFIER_4, CMD_MODIFIER_5,
     CMD_FX_UNIT_ON, CMD_FX_DRY_WET,
     CMD_FX_KNOB_1, CMD_FX_KNOB_2, CMD_FX_KNOB_3,
     CMD_FX_BUTTON_1, CMD_FX_BUTTON_2, CMD_FX_BUTTON_3,
+    CMD_DECK_IS_LOADED,
     slot_target,
 )
 
-# Physical layout: (col, row, midi_name, deck, stem_slot, m1_value, m2_value)
-# Column-to-deck mirrors S4 MK3 mixer: Col1=C, Col2=A, Col3=B, Col4=D
-STEM_BUTTONS = [
-    # Row 1: Stem 1 (Drums)
-    (1, 1, 'Left.HotCue 1',     'C', 1, 1, 1),
-    (2, 1, 'Left.HotCue 2',     'A', 1, 1, 2),
-    (3, 1, 'Right.HotCue 1',    'B', 1, 1, 3),
-    (4, 1, 'Right.HotCue 2',    'D', 1, 1, 4),
-    # Row 2: Stem 2 (Bass)
-    (1, 2, 'Left.HotCue 3',     'C', 2, 2, 1),
-    (2, 2, 'Left.HotCue 4',     'A', 2, 2, 2),
-    (3, 2, 'Right.HotCue 3',    'B', 2, 2, 3),
-    (4, 2, 'Right.HotCue 4',    'D', 2, 2, 4),
-    # Row 3: Stem 3 (Other/Melody)
-    (1, 3, 'Left.Flux Button',  'C', 3, 3, 1),
-    (2, 3, 'Left.Sync Button',  'A', 3, 3, 2),
-    (3, 3, 'Right.Flux Button', 'B', 3, 3, 3),
-    (4, 3, 'Right.Sync Button', 'D', 3, 3, 4),
-    # Row 4: Stem 4 (Vocals)
-    (1, 4, 'Left.Cue Button',   'C', 4, 4, 1),
-    (2, 4, 'Left.Play Button',  'A', 4, 4, 2),
-    (3, 4, 'Right.Cue Button',  'B', 4, 4, 3),
-    (4, 4, 'Right.Play Button', 'D', 4, 4, 4),
+# ---------------------------------------------------------------------------
+# Physical layout
+# ---------------------------------------------------------------------------
+
+# Mode toggle: FX Assign buttons above each column
+# (ctrl_name, col) where col = M1 value (1-4)
+MODE_BUTTONS = [
+    ('Left.FX Assign 1',  1),   # Col 1 → Deck C
+    ('Left.FX Assign 2',  2),   # Col 2 → Deck A
+    ('Right.FX Assign 1', 3),   # Col 3 → Deck B
+    ('Right.FX Assign 2', 4),   # Col 4 → Deck D
 ]
 
+# Mode LED outputs (FX Assign indicator LEDs)
+MODE_LED_OUTPUTS = [
+    ('Left.FX Assign Indicator 1',  1),
+    ('Left.FX Assign Indicator 2',  2),
+    ('Right.FX Assign Indicator 1', 3),
+    ('Right.FX Assign Indicator 2', 4),
+]
+
+# Stem buttons: (ctrl_name, deck, stem_slot, row, col)
+# col = M1 value (deck column): 1=C, 2=A, 3=B, 4=D
+# row = stem number: 1=Drums, 2=Bass, 3=Other, 4=Vocals
+STEM_BUTTONS = [
+    # Row 1: Stem 1 (Drums)
+    ('Left.HotCue 1',     'C', 1, 1, 1),
+    ('Left.HotCue 2',     'A', 1, 1, 2),
+    ('Right.HotCue 1',    'B', 1, 1, 3),
+    ('Right.HotCue 2',    'D', 1, 1, 4),
+    # Row 2: Stem 2 (Bass)
+    ('Left.HotCue 3',     'C', 2, 2, 1),
+    ('Left.HotCue 4',     'A', 2, 2, 2),
+    ('Right.HotCue 3',    'B', 2, 2, 3),
+    ('Right.HotCue 4',    'D', 2, 2, 4),
+    # Row 3: Stem 3 (Other/Melody)
+    ('Left.Flux Button',  'C', 3, 3, 1),
+    ('Left.Sync Button',  'A', 3, 3, 2),
+    ('Right.Flux Button', 'B', 3, 3, 3),
+    ('Right.Sync Button', 'D', 3, 3, 4),
+    # Row 4: Stem 4 (Vocals)
+    ('Left.Cue Button',   'C', 4, 4, 1),
+    ('Left.Play Button',  'A', 4, 4, 2),
+    ('Right.Cue Button',  'B', 4, 4, 3),
+    ('Right.Play Button', 'D', 4, 4, 4),
+]
+
+# Row number → stem selection modifier
+ROW_MODIFIER = {
+    1: CMD_MODIFIER_2,  # M2 = stem 1 selected
+    2: CMD_MODIFIER_3,  # M3 = stem 2 selected
+    3: CMD_MODIFIER_4,  # M4 = stem 3 selected
+    4: CMD_MODIFIER_5,  # M5 = stem 4 selected
+}
+
+COL_TO_DECK = {1: 'C', 2: 'A', 3: 'B', 4: 'D'}
+
+# LED colors for HotCue RGB buttons (NHL output controls are color-specific)
+# Columns 1,4 (Deck C,D - outer) = Yellow; Columns 2,3 (Deck A,B - inner) = Blue
+HOTCUE_LED_COLORS = {1: 'Yellow', 2: 'Blue', 3: 'Blue', 4: 'Yellow'}
+
+# Dim LED colors for empty decks (different color = no conflict with mute LEDs)
+# Yellow columns get Warm Yellow (dimmer shade), Blue columns get Cyan
+HOTCUE_DIM_COLORS = {1: 'Warm Yellow', 2: 'Cyan', 3: 'Cyan', 4: 'Warm Yellow'}
+
+# Deck target for CMD_DECK_IS_LOADED output: A=0, B=1, C=2, D=3
+DECK_TARGET = {'A': 0, 'B': 1, 'C': 2, 'D': 3}
+
+def _led_name(ctrl_name: str, col: int = 2) -> str:
+    """Map input control name to LED output control name.
+
+    HotCue buttons have RGB LEDs with color-specific output names
+    (e.g. 'Left.HotCue 1.Blue'). Other buttons use the same name.
+    """
+    if 'HotCue' in ctrl_name:
+        return f'{ctrl_name}.{HOTCUE_LED_COLORS[col]}'
+    return ctrl_name
+
+# Encoders: (ctrl_name, traktor_cmd)
 ENCODERS = [
     ('Left.Loop Encoder Turn',  CMD_SLOT_VOLUME),    # Stem volume
     ('Browse Encoder Turn',     CMD_SLOT_FILTER),     # Stem filter
     ('Right.Loop Encoder Turn', CMD_SLOT_FX_AMOUNT),  # Stem FX send
 ]
 
+# FX controls: full FX Unit 3 (left) and FX Unit 4 (right)
 FX_ENTRIES = [
-    # Left side = FX Unit 3
+    # Left side = FX Unit 3 (target=2)
     ('Left.FX Mode Button',  CMD_FX_UNIT_ON,  2, False),
     ('Left.FX D/W Knob',     CMD_FX_DRY_WET,  2, True),
     ('Left.FX 1 Button',     CMD_FX_BUTTON_1, 2, False),
@@ -71,7 +132,7 @@ FX_ENTRIES = [
     ('Left.FX 2 Knob',       CMD_FX_KNOB_2,   2, True),
     ('Left.FX 3 Button',     CMD_FX_BUTTON_3, 2, False),
     ('Left.FX 3 Knob',       CMD_FX_KNOB_3,   2, True),
-    # Right side = FX Unit 4
+    # Right side = FX Unit 4 (target=3)
     ('Right.FX Mode Button', CMD_FX_UNIT_ON,  3, False),
     ('Right.FX D/W Knob',    CMD_FX_DRY_WET,  3, True),
     ('Right.FX 1 Button',    CMD_FX_BUTTON_1, 3, False),
@@ -84,7 +145,16 @@ FX_ENTRIES = [
 
 
 def generate():
-    """Generate all mapping entries. Returns (cmai_payloads, ctrl_names)."""
+    """Generate all mapping entries.
+
+    Architecture:
+    - M1: active column (0=mute mode, 1=C, 2=A, 3=B, 4=D)
+    - M2-M5: stem 1-4 selected (0/1), toggled by stem buttons
+
+    Mute mode (M1=0): buttons toggle stem mute
+    Control mode (M1=1-4): buttons select stems, encoders adjust selected stems
+    for the deck identified by M1
+    """
     cmais = []
     names = []
     idx = 0
@@ -95,61 +165,70 @@ def generate():
         names.append(ctrl_name)
         idx += 1
 
-    # Section A: 16 stem buttons x 6 entries = 96
-    for col, row, midi_name, deck, slot, m1, m2 in STEM_BUTTONS:
+    # --- Section A: Mode toggle (20 entries) ---
+    # Absolute mode requires conditions on ALL entries to prevent release reset.
+    # Without condition, Absolute mode sends max_output on press AND 0 on release.
+    # With condition, release doesn't fire because the condition is no longer met
+    # (the press already changed M1, so the original condition is false).
+    #
+    # Per button (col=N): 4 "enter" entries (from M1=0,other1,other2,other3)
+    #   + 1 "exit" entry (from M1=N → M1=0). Allows direct column switching.
+    all_cols = [c for _, c in MODE_BUTTONS]
+    for ctrl, col in MODE_BUTTONS:
+        # Enter from each possible source value (0 and other columns)
+        for src in [0] + [c for c in all_cols if c != col]:
+            add(ctrl, 0, CMD_MODIFIER_1,
+                build_cmad_modifier(value=col,
+                                    cond1_mod=CMD_MODIFIER_1, cond1_val=src))
+        # Exit: toggle off when already in this column
+        add(ctrl, 0, CMD_MODIFIER_1,
+            build_cmad_modifier(value=0,
+                                cond1_mod=CMD_MODIFIER_1, cond1_val=col))
+
+    # --- Section B: Stem mute in mute mode (16 entries) ---
+    # Condition: M1=0
+    for ctrl, deck, slot, row, col in STEM_BUTTONS:
         tgt = slot_target(deck, slot)
+        add(ctrl, 0, CMD_SLOT_MUTE,
+            build_cmad_button(target=tgt, interaction_mode=1,
+                              cond1_mod=CMD_MODIFIER_1, cond1_val=0))
 
-        # A1: Set M1 (stem row) on press
-        add(midi_name, 0, CMD_MODIFIER_1,
-            build_cmad_button(target=m1, interaction_mode=2))
+    # --- Section C: Stem select (32 entries) ---
+    # Toggle stem selection (M2-M5) using Absolute mode with conditions.
+    # Conditions prevent Absolute mode release reset (latch pattern):
+    #   Press when M=0: condition true → set M=1. Release: M=1 now, condition false → no reset.
+    #   Press when M=1: first entry skips (M≠0). Second fires → set M=0. Release: M=0, condition false → no reset.
+    # cond2: M1=col ensures stem select only fires in the correct column's control mode,
+    # preventing unintended modifier changes in mute mode (M1=0) or other columns.
+    for ctrl, deck, slot, row, col in STEM_BUTTONS:
+        stem_mod = ROW_MODIFIER[row]
+        add(ctrl, 0, stem_mod,
+            build_cmad_modifier(value=1,
+                                cond1_mod=stem_mod, cond1_val=0,
+                                cond2_mod=CMD_MODIFIER_1, cond2_val=col))
+        add(ctrl, 0, stem_mod,
+            build_cmad_modifier(value=0,
+                                cond1_mod=stem_mod, cond1_val=1,
+                                cond2_mod=CMD_MODIFIER_1, cond2_val=col))
 
-        # A2: Set M2 (deck column) on press
-        add(midi_name, 0, CMD_MODIFIER_2,
-            build_cmad_button(target=m2, interaction_mode=2))
-
-        # A3: Reset M3 (encoder-used flag) on press
-        add(midi_name, 0, CMD_MODIFIER_3,
-            build_cmad_button(target=0, interaction_mode=2))
-
-        # A4: Toggle mute on release (only if encoder was NOT used)
-        add(midi_name, 0, CMD_SLOT_MUTE,
-            build_cmad_button(
-                target=tgt, interaction_mode=1,
-                cond1_mod=CMD_MODIFIER_3, cond1_val=0,
-                trigger_release=1,
-            ))
-
-        # A5: Reset M1 on release
-        add(midi_name, 0, CMD_MODIFIER_1,
-            build_cmad_button(target=0, interaction_mode=2, trigger_release=1))
-
-        # A6: Reset M2 on release
-        add(midi_name, 0, CMD_MODIFIER_2,
-            build_cmad_button(target=0, interaction_mode=2, trigger_release=1))
-
-    # Section B: 3 encoders x 16 M1/M2 combinations = 48
+    # --- Section D: Encoders x deck x stem (48 entries) ---
+    # Conditions: M1=col (deck) AND M_stem=1
+    # interaction_mode=4 (Relative) for encoder Turn controls
     for enc_name, enc_cmd in ENCODERS:
-        for m1 in range(1, 5):
-            for m2 in range(1, 5):
-                deck = {1: 'C', 2: 'A', 3: 'B', 4: 'D'}[m2]
-                tgt = slot_target(deck, m1)
+        for col in range(1, 5):
+            deck = COL_TO_DECK[col]
+            for row in range(1, 5):
+                tgt = slot_target(deck, row)
+                stem_mod = ROW_MODIFIER[row]
                 add(enc_name, 0, enc_cmd,
                     build_cmad_knob(
                         target=tgt,
-                        cond1_mod=CMD_MODIFIER_1, cond1_val=m1,
-                        cond2_mod=CMD_MODIFIER_2, cond2_val=m2,
+                        interaction_mode=4,
+                        cond1_mod=CMD_MODIFIER_1, cond1_val=col,
+                        cond2_mod=stem_mod, cond2_val=1,
                     ))
 
-    # Section B2: 3 encoders x 4 M1 values = 12 (set M3 encoder-used flag)
-    for enc_name, _ in ENCODERS:
-        for m1 in range(1, 5):
-            add(enc_name, 0, CMD_MODIFIER_3,
-                build_cmad_button(
-                    target=1, interaction_mode=2,
-                    cond1_mod=CMD_MODIFIER_1, cond1_val=m1,
-                ))
-
-    # Section C: FX Unit 3/4 controls = 16
+    # --- Section E: FX controls (16 entries) ---
     for fx_name, fx_cmd, fx_tgt, is_knob in FX_ENTRIES:
         if is_knob:
             add(fx_name, 0, fx_cmd, build_cmad_knob(target=fx_tgt))
@@ -157,11 +236,40 @@ def generate():
             add(fx_name, 0, fx_cmd,
                 build_cmad_button(target=fx_tgt, interaction_mode=1))
 
-    # Section D: LED output for 16 stem buttons = 16
-    for col, row, midi_name, deck, slot, m1, m2 in STEM_BUTTONS:
+    # --- Section F: Mode button LEDs (4 entries) ---
+    # Output CMD_MODIFIER_1 with condition M1=col: LED on when column active
+    for ctrl, col in MODE_LED_OUTPUTS:
+        add(ctrl, 1, CMD_MODIFIER_1,
+            build_cmad_output(target=1, invert=0,
+                              cond1_mod=CMD_MODIFIER_1, cond1_val=col))
+
+    # --- Section G: Stem mute LEDs (16 entries) ---
+    # invert=1: lit = unmuted (playing), dark = muted
+    # HotCue buttons use color-specific output names (e.g. 'Left.HotCue 1.Blue')
+    for ctrl, deck, slot, row, col in STEM_BUTTONS:
         tgt = slot_target(deck, slot)
-        add(midi_name, 1, CMD_SLOT_MUTE,
+        add(_led_name(ctrl, col), 1, CMD_SLOT_MUTE,
             build_cmad_output(target=tgt, invert=1))
+
+    # --- Section H: FX button LEDs (8 entries) ---
+    # Output entries for FX buttons: lit when active (FX Unit On, FX Slot active)
+    for fx_name, fx_cmd, fx_tgt, is_knob in FX_ENTRIES:
+        if not is_knob:
+            add(fx_name, 1, fx_cmd,
+                build_cmad_output(target=fx_tgt, invert=0))
+
+    # --- Section I: Empty deck dim LEDs (8 entries) ---
+    # When deck has no track loaded, HotCue buttons show dim glow in alternate color.
+    # Uses different NHL color output (Warm Yellow / Cyan) to avoid conflict with
+    # mute LEDs (Yellow / Blue). CMD_DECK_IS_LOADED invert=1: ON when NOT loaded.
+    # Only HotCue buttons (rows 1-2) - non-HotCue have mono LEDs, can't use alt color.
+    for ctrl, deck, slot, row, col in STEM_BUTTONS:
+        if 'HotCue' not in ctrl:
+            continue
+        deck_tgt = DECK_TARGET[deck]
+        led_name = f'{ctrl}.{HOTCUE_DIM_COLORS[col]}'
+        add(led_name, 1, CMD_DECK_IS_LOADED,
+            build_cmad_output(target=deck_tgt, invert=1))
 
     return cmais, names
 
