@@ -6,23 +6,23 @@ Field layout reverse-engineered from real TSI files and cmdr-editor source.
 Field map (offset in bytes):
     [0]   DeviceType        - always 4
     [4]   ControlType       - 0=Button, 1=FaderOrKnob, 0xFFFF=Output
-    [8]   InteractionMode   - 1=Toggle, 2=Direct, 3=Absolute, 4=Relative, 5=Inc, 6=Dec, 8=OutputMode
+    [8]   InteractionMode   - 1=Toggle, 2=Hold, 3=Direct, 4=Relative, 5=Inc, 6=Dec, 8=Output
     [12]  Target            - deck/slot/FX unit assignment (0-15)
     [16]  AutoRepeat        - 0
     [20]  Invert            - 0 or 1
-    [24]  Reserved
-    [28]  MaxInput          - float32: 5.0 (0x40A00000)
-    [32]  Reserved
-    [36]  Reserved
-    [40]  ValueType         - 1=button, 2=continuous
-    [44]  MaxOutput         - float32: 1.0 (0x3F800000)
-    [48]  Reserved
-    [52]  Cond1ModifierCmd  - modifier command ID for condition 1 (0=none)
-    [56]  Cond1Value        - value the modifier must equal
-    [60]  Cond2Value        - value for condition 2
-    [64]  Cond2ModifierCmd  - modifier command ID for condition 2 (0=none)
-    [68]  Reserved
-    [72]  Reserved
+    [24]  SoftTakeover      - 0
+    [28]  RotarySensitivity - float32: 5.0 (0x40A00000)
+    [32]  RotaryAcceleration - 0
+    [36]  HasValueUI        - 0 or 1
+    [40]  ValueUIType       - 1=button, 2=continuous
+    [44]  SetValueTo        - float32/uint32 value
+    [48]  Comment           - WideString char count (0 = empty)
+    [52]  Cond1Id           - modifier command ID for condition 1 (0=none)
+    [56]  Cond1Target       - condition 1 target deck (0=Global)
+    [60]  Cond1Value        - condition 1 value (uint32)
+    [64]  Cond2Id           - modifier command ID for condition 2 (0=none)
+    [68]  Cond2Target       - condition 2 target deck (0=Global)
+    [72]  Cond2Value        - condition 2 value (uint32)
     [76]  Reserved76        - 1 for buttons, 2 for knobs
     [80]  Reserved80        - 0
     [84]  Reserved84        - 1 for buttons, 2 for knobs
@@ -65,8 +65,8 @@ def build_cmad_knob(
         4, control_type, interaction_mode, target,
         0, invert, 0, 0x40A00000,
         0, 0, 2, 0x3F800000,
-        0, cond1_mod, cond1_val, cond2_val,
-        cond2_mod, 0, 0, 2,
+        0, cond1_mod, 0, cond1_val,
+        cond2_mod, 0, cond2_val, 2,
         0, 2, 0x3F800000, 0,
         127, 0, 1, 2,
         0x3D800000, 0,
@@ -99,8 +99,8 @@ def build_cmad_button(
         4, 0, interaction_mode, target,
         0, invert, 0, 0x40A00000,
         0, 0, 1, max_output,
-        0, cond1_mod, cond1_val, cond2_val,
-        cond2_mod, 0, 0, 1,
+        0, cond1_mod, 0, cond1_val,
+        cond2_mod, 0, cond2_val, 1,
         0, 1, 1, 0,
         127, trigger_release, led_feedback, 1,
         1, 0,
@@ -136,8 +136,8 @@ def build_cmad_modifier(
         4, 0, interaction_mode, 0,        # target=0 always for modifiers
         0, 0, 0, 0x40A00000,
         0, 1, 1, value,                    # [9]=1, [11]=value
-        0, cond1_mod, cond1_val, cond2_val,
-        cond2_mod, 0, 0, 1,
+        0, cond1_mod, 0, cond1_val,
+        cond2_mod, 0, cond2_val, 1,
         0, 1, 7, 0,                        # [22]=7 (modifier max range)
         127, 0, 1, 1,                      # [26]=1 (LED feedback)
         1, 0,                              # [28]=output_scale=1, [29]=0 (Override factory map)
@@ -174,8 +174,8 @@ def build_cmad_continuous_button(
         4, 0, interaction_mode, target,
         0, invert, 0, 0x40A00000,
         0, 0, 2, max_output,              # value_type=2 (continuous)
-        0, cond1_mod, cond1_val, cond2_val,
-        cond2_mod, 0, 0, 2,               # reserved76=2 (knob-style)
+        0, cond1_mod, 0, cond1_val,
+        cond2_mod, 0, cond2_val, 2,               # reserved76=2 (knob-style)
         0, 2, 0x3F800000, 0,              # reserved84=2, encoder_mode=1.0f
         127, trigger_release, 0, 2,        # led_type=2 (knob-style)
         0x3D800000, 0,                     # output_scale=0.0625f
@@ -207,8 +207,8 @@ def build_cmad_output(
         4, 0xFFFF, 8, target,
         0, invert, 0, 0x40A00000,
         0, 0, 1, 0,               # MaxOutput = 0 (matches community pattern)
-        0, cond1_mod, cond1_val, cond2_val,
-        cond2_mod, 0, 0, 1,
+        0, cond1_mod, 0, cond1_val,
+        cond2_mod, 0, cond2_val, 1,
         0, 1, 1, 0,
         127, trigger_release, 0, 1,
         1, 0,
@@ -233,8 +233,8 @@ def parse_cmad(data: bytes) -> dict:
         'device_type', 'control_type', 'interaction_mode', 'target',
         'auto_repeat', 'invert', 'reserved24', 'max_input_raw',
         'reserved32', 'reserved36', 'value_type', 'max_output_raw',
-        'reserved48', 'cond1_mod_cmd', 'cond1_value', 'cond2_value',
-        'cond2_mod_cmd', 'reserved68', 'reserved72', 'reserved76',
+        'reserved48', 'cond1_mod_cmd', 'cond1_target', 'cond1_value',
+        'cond2_mod_cmd', 'cond2_target', 'cond2_value', 'reserved76',
         'reserved80', 'reserved84', 'encoder_mode', 'reserved92',
         'max_velocity', 'trigger_release', 'led_feedback', 'led_type',
         'output_scale_raw', 'reserved116',

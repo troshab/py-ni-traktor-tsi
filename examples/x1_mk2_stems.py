@@ -3,7 +3,7 @@
 X1 MK2 Stems (trosha_b edition) - TSI mapping generator.
 
 Turns the Traktor Kontrol X1 MK2 into a dedicated stems controller
-for 4 decks + FX Unit 3/4 controller.
+for 4 decks + FX Unit 1-4 controller.
 
 Two modes:
   - Mute mode (default): bottom 4x4 grid = stem mute toggles
@@ -28,7 +28,7 @@ from traktor_tsi import (
     build_cmad_knob, build_cmad_button, build_cmad_modifier, build_cmad_output,
     CMD_SLOT_VOLUME, CMD_SLOT_FILTER, CMD_SLOT_MUTE, CMD_SLOT_FX_AMOUNT,
     CMD_MODIFIER_1, CMD_MODIFIER_2, CMD_MODIFIER_3,
-    CMD_MODIFIER_4, CMD_MODIFIER_5,
+    CMD_MODIFIER_4, CMD_MODIFIER_5, CMD_MODIFIER_6, CMD_MODIFIER_7,
     CMD_FX_UNIT_ON, CMD_FX_DRY_WET,
     CMD_FX_KNOB_1, CMD_FX_KNOB_2, CMD_FX_KNOB_3,
     CMD_FX_BUTTON_1, CMD_FX_BUTTON_2, CMD_FX_BUTTON_3,
@@ -121,27 +121,45 @@ ENCODERS = [
     ('Right.Loop Encoder Turn', CMD_SLOT_FX_AMOUNT),  # Stem FX send
 ]
 
-# FX controls: full FX Unit 3 (left) and FX Unit 4 (right)
-FX_ENTRIES = [
-    # Left side = FX Unit 3 (target=2)
-    ('Left.FX Mode Button',  CMD_FX_UNIT_ON,  2, False),
-    ('Left.FX D/W Knob',     CMD_FX_DRY_WET,  2, True),
-    ('Left.FX 1 Button',     CMD_FX_BUTTON_1, 2, False),
-    ('Left.FX 1 Knob',       CMD_FX_KNOB_1,   2, True),
-    ('Left.FX 2 Button',     CMD_FX_BUTTON_2, 2, False),
-    ('Left.FX 2 Knob',       CMD_FX_KNOB_2,   2, True),
-    ('Left.FX 3 Button',     CMD_FX_BUTTON_3, 2, False),
-    ('Left.FX 3 Knob',       CMD_FX_KNOB_3,   2, True),
-    # Right side = FX Unit 4 (target=3)
-    ('Right.FX Mode Button', CMD_FX_UNIT_ON,  3, False),
-    ('Right.FX D/W Knob',    CMD_FX_DRY_WET,  3, True),
-    ('Right.FX 1 Button',    CMD_FX_BUTTON_1, 3, False),
-    ('Right.FX 1 Knob',      CMD_FX_KNOB_1,   3, True),
-    ('Right.FX 2 Button',    CMD_FX_BUTTON_2, 3, False),
-    ('Right.FX 2 Knob',      CMD_FX_KNOB_2,   3, True),
-    ('Right.FX 3 Button',    CMD_FX_BUTTON_3, 3, False),
-    ('Right.FX 3 Knob',      CMD_FX_KNOB_3,   3, True),
-]
+# FX physical controls per side: (ctrl_name, traktor_cmd, is_knob)
+FX_CONTROLS = {
+    'left': [
+        ('Left.FX Mode Button',  CMD_FX_UNIT_ON,  False),
+        ('Left.FX D/W Knob',     CMD_FX_DRY_WET,  True),
+        ('Left.FX 1 Button',     CMD_FX_BUTTON_1, False),
+        ('Left.FX 1 Knob',       CMD_FX_KNOB_1,   True),
+        ('Left.FX 2 Button',     CMD_FX_BUTTON_2, False),
+        ('Left.FX 2 Knob',       CMD_FX_KNOB_2,   True),
+        ('Left.FX 3 Button',     CMD_FX_BUTTON_3, False),
+        ('Left.FX 3 Knob',       CMD_FX_KNOB_3,   True),
+    ],
+    'right': [
+        ('Right.FX Mode Button', CMD_FX_UNIT_ON,  False),
+        ('Right.FX D/W Knob',    CMD_FX_DRY_WET,  True),
+        ('Right.FX 1 Button',    CMD_FX_BUTTON_1, False),
+        ('Right.FX 1 Knob',      CMD_FX_KNOB_1,   True),
+        ('Right.FX 2 Button',    CMD_FX_BUTTON_2, False),
+        ('Right.FX 2 Knob',      CMD_FX_KNOB_2,   True),
+        ('Right.FX 3 Button',    CMD_FX_BUTTON_3, False),
+        ('Right.FX 3 Knob',      CMD_FX_KNOB_3,   True),
+    ],
+}
+
+# FX unit selection: modifier + target per modifier value
+# M6 (left): 0→FX3 (target 2), 1→FX1 (target 0)
+# M7 (right): 0→FX4 (target 3), 1→FX2 (target 1)
+FX_SELECT = {
+    'left':  (CMD_MODIFIER_6, {0: 2, 1: 0}),
+    'right': (CMD_MODIFIER_7, {0: 3, 1: 1}),
+}
+
+# FX Assign button → (modifier, value_to_set)
+FX_ASSIGN_MOD = {
+    'Left.FX Assign 1':  (CMD_MODIFIER_6, 0),   # → FX3 (default)
+    'Left.FX Assign 2':  (CMD_MODIFIER_6, 1),   # → FX1
+    'Right.FX Assign 1': (CMD_MODIFIER_7, 1),   # → FX2
+    'Right.FX Assign 2': (CMD_MODIFIER_7, 0),   # → FX4 (default)
+}
 
 
 def generate():
@@ -150,10 +168,18 @@ def generate():
     Architecture:
     - M1: active column (0=mute mode, 1=C, 2=A, 3=B, 4=D)
     - M2-M5: stem 1-4 selected (0/1), toggled by stem buttons
+    - M6: left FX unit select (0=FX3, 1=FX1)
+    - M7: right FX unit select (0=FX4, 1=FX2)
 
     Mute mode (M1=0): buttons toggle stem mute
     Control mode (M1=1-4): buttons select stems, encoders adjust selected stems
     for the deck identified by M1
+
+    FX Assign buttons set both M1 (column select) and M6/M7 (FX unit select):
+    - FX Assign 1 Left (col 1/C) → M6=0 (FX3, default)
+    - FX Assign 2 Left (col 2/A) → M6=1 (FX1)
+    - FX Assign 1 Right (col 3/B) → M7=1 (FX2)
+    - FX Assign 2 Right (col 4/D) → M7=0 (FX4, default)
     """
     cmais = []
     names = []
@@ -184,6 +210,16 @@ def generate():
         add(ctrl, 0, CMD_MODIFIER_1,
             build_cmad_modifier(value=0,
                                 cond1_mod=CMD_MODIFIER_1, cond1_val=col))
+
+    # --- Section A2: FX unit selector (4 entries) ---
+    # FX Assign buttons also select which FX unit the side controls.
+    # M6 (left): 0=FX3 (default), 1=FX1. M7 (right): 0=FX4 (default), 1=FX2.
+    # Latch: condition on opposite value prevents Absolute mode release reset.
+    for ctrl, _col in MODE_BUTTONS:
+        fx_mod, fx_val = FX_ASSIGN_MOD[ctrl]
+        add(ctrl, 0, fx_mod,
+            build_cmad_modifier(value=fx_val,
+                                cond1_mod=fx_mod, cond1_val=1 - fx_val))
 
     # --- Section B: Stem mute in mute mode (16 entries) ---
     # Condition: M1=0
@@ -228,20 +264,33 @@ def generate():
                         cond2_mod=stem_mod, cond2_val=1,
                     ))
 
-    # --- Section E: FX controls (16 entries) ---
-    for fx_name, fx_cmd, fx_tgt, is_knob in FX_ENTRIES:
-        if is_knob:
-            add(fx_name, 0, fx_cmd, build_cmad_knob(target=fx_tgt))
-        else:
-            add(fx_name, 0, fx_cmd,
-                build_cmad_button(target=fx_tgt, interaction_mode=1))
+    # --- Section E: FX controls (32 entries) ---
+    # Conditional on M6 (left) / M7 (right) for FX unit selection.
+    for side in ('left', 'right'):
+        fx_mod, targets = FX_SELECT[side]
+        for mod_val, fx_tgt in targets.items():
+            for fx_name, fx_cmd, is_knob in FX_CONTROLS[side]:
+                if is_knob:
+                    add(fx_name, 0, fx_cmd,
+                        build_cmad_knob(target=fx_tgt,
+                                        cond1_mod=fx_mod, cond1_val=mod_val))
+                else:
+                    add(fx_name, 0, fx_cmd,
+                        build_cmad_button(target=fx_tgt, interaction_mode=1,
+                                          cond1_mod=fx_mod, cond1_val=mod_val))
 
-    # --- Section F: Mode button LEDs (4 entries) ---
-    # Output CMD_MODIFIER_1 with condition M1=col: LED on when column active
-    for ctrl, col in MODE_LED_OUTPUTS:
-        add(ctrl, 1, CMD_MODIFIER_1,
-            build_cmad_output(target=1, invert=0,
-                              cond1_mod=CMD_MODIFIER_1, cond1_val=col))
+    # --- Section F: FX unit selector LEDs (4 entries) ---
+    # LED shows which FX unit is active per side.
+    # Output raw modifier value; invert for "default" buttons (M6=0, M7=0).
+    fx_indicator_leds = [
+        ('Left.FX Assign Indicator 1',  CMD_MODIFIER_6, 1),  # invert=1: ON when M6=0 (FX3)
+        ('Left.FX Assign Indicator 2',  CMD_MODIFIER_6, 0),  # invert=0: ON when M6=1 (FX1)
+        ('Right.FX Assign Indicator 1', CMD_MODIFIER_7, 0),  # invert=0: ON when M7=1 (FX2)
+        ('Right.FX Assign Indicator 2', CMD_MODIFIER_7, 1),  # invert=1: ON when M7=0 (FX4)
+    ]
+    for ctrl, fx_mod, inv in fx_indicator_leds:
+        add(ctrl, 1, fx_mod,
+            build_cmad_output(target=0, invert=inv))
 
     # --- Section G: Stem mute LEDs (16 entries) ---
     # invert=1: lit = unmuted (playing), dark = muted
@@ -251,12 +300,16 @@ def generate():
         add(_led_name(ctrl, col), 1, CMD_SLOT_MUTE,
             build_cmad_output(target=tgt, invert=1))
 
-    # --- Section H: FX button LEDs (8 entries) ---
-    # Output entries for FX buttons: lit when active (FX Unit On, FX Slot active)
-    for fx_name, fx_cmd, fx_tgt, is_knob in FX_ENTRIES:
-        if not is_knob:
-            add(fx_name, 1, fx_cmd,
-                build_cmad_output(target=fx_tgt, invert=0))
+    # --- Section H: FX button LEDs (16 entries) ---
+    # Conditional on M6/M7 for correct FX unit target.
+    for side in ('left', 'right'):
+        fx_mod, targets = FX_SELECT[side]
+        for mod_val, fx_tgt in targets.items():
+            for fx_name, fx_cmd, is_knob in FX_CONTROLS[side]:
+                if not is_knob:
+                    add(fx_name, 1, fx_cmd,
+                        build_cmad_output(target=fx_tgt, invert=0,
+                                          cond1_mod=fx_mod, cond1_val=mod_val))
 
     # --- Section I: Empty deck dim LEDs (8 entries) ---
     # When deck has no track loaded, HotCue buttons show dim glow in alternate color.
@@ -294,7 +347,8 @@ def main():
     print(f"  Total entries: {len(cmais)}")
 
     ddcb = build_ddcb(cmais, names)
-    new_binary = rebuild_tsi(original, ddcb, 'X1 MK2 Stems (trosha_b edition)')
+    new_binary = rebuild_tsi(original, ddcb,
+                             new_comment='X1 MK2 StemsFX (trosha_b edition)')
 
     print(f"\nWriting: {args.output}")
     write_tsi(new_binary, args.output, args.source)

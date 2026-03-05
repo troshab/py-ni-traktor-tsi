@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
-S4 MK3 Stem Load Reset + DJ NUO Mod - TSI merge tool.
+S4 MK3 Stem Load Reset + FX Toggle + DJ NUO Mod - TSI merge tool.
 
-Merges the DJ NUO Loop In/Out Control mapping with stem parameter
-reset on the Load (Browse.Encoder.Push) button.
+Merges the DJ NUO Loop In/Out Control mapping with:
+  - Stem parameter reset on Load (Browse.Encoder.Push): Volume, Filter,
+    FX Amount, Mute, FX On all reset to defaults on press.
+  - Browse.Preview FX toggle: toggles FX On/Off for all 4 stems of the
+    focused deck.
 
-When loading a track, all stem parameters (Volume, Filter, FX Amount,
-Mute) for the focused deck reset to defaults. Uses NUO's M7/M8
-modifiers (set by Deck Select buttons) as conditions.
+Uses NUO's M7/M8 modifiers (set by Deck Select buttons) as conditions.
 
 Usage:
     python -m examples.s4_mk3_stem_reset_nuo \
@@ -27,6 +28,7 @@ from traktor_tsi import (
     build_cmai, build_ddcb,
     build_cmad_button, build_cmad_continuous_button,
     CMD_SLOT_VOLUME, CMD_SLOT_FILTER, CMD_SLOT_FX_AMOUNT, CMD_SLOT_MUTE,
+    CMD_SLOT_FX_ON,
     CMD_MODIFIER_7, CMD_MODIFIER_8, CMD_LOAD_SELECTED,
     slot_target, deck_target,
 )
@@ -45,6 +47,11 @@ DECK_COND = {
 LOAD_SIDES = [
     ('Left.Browse.Encoder.Push',  ['A', 'C']),
     ('Right.Browse.Encoder.Push', ['B', 'D']),
+]
+
+PREVIEW_SIDES = [
+    ('Left.Browse.Preview',  ['A', 'C']),
+    ('Right.Browse.Preview', ['B', 'D']),
 ]
 
 # Continuous stem parameters: Absolute mode (3) with default values.
@@ -106,18 +113,28 @@ def extract_entries(binary: bytes) -> tuple[list[bytes], list[str]]:
 
 
 def generate_stem_reset(start_idx: int) -> tuple[list[bytes], list[str]]:
-    """Generate Load + stem reset mapping entries.
+    """Generate stem reset + Browse.Preview FX toggle entries.
 
-    Per side: 1 Load + 2 decks x 4 slots x (3 continuous + 1 mute) = 33 entries.
-    2 sides = 66 entries total.
+    Stem reset (on Load press):
+      Per side: 1 Load + 2 decks x 4 slots x 5 params = 41 entries.
+      2 sides = 82 entries.
 
-    Load Selected fires on press (trigger_release=0).
-    Stem reset fires on release (trigger_release=1) after Load completes.
+    Browse.Preview FX toggle:
+      Per side: 2 decks x 4 slots = 8 entries.
+      2 sides = 16 entries.
+
+    Total: 98 entries.
+
+    All stem reset entries fire on press (trigger_release=0). Absolute mode
+    sends max_output on press and ignores release (NI: "activates on Note On,
+    ignores Note Off"). Previous bug: trigger_release=1 sent 0 (release-state
+    value) instead of max_output for Volume and Filter.
     """
     cmais = []
     names = []
     idx = start_idx
 
+    # --- Stem reset on Load press ---
     for load_ctrl, decks in LOAD_SIDES:
         # Explicit Load Selected: fires on press, no condition needed.
         cmais.append(build_cmai(idx, 0, CMD_LOAD_SELECTED,
@@ -132,30 +149,58 @@ def generate_stem_reset(start_idx: int) -> tuple[list[bytes], list[str]]:
             cond_mod, cond_val = DECK_COND[deck]
             for slot in range(1, 5):
                 tgt = slot_target(deck, slot)
-                # Continuous params: Absolute mode with value_type=2
+                # Continuous params: Absolute mode, fire on press
                 for cmd, default_val in CONTINUOUS_RESETS:
                     cmais.append(build_cmai(idx, 0, cmd,
                         build_cmad_continuous_button(
                             target=tgt,
                             interaction_mode=3,
                             max_output=default_val,
-                            trigger_release=1,
+                            trigger_release=0,
                             cond1_mod=cond_mod,
                             cond1_val=cond_val,
                         )))
                     names.append(load_ctrl)
                     idx += 1
-                # Mute: Digital button, Direct mode sets to 0 (unmuted)
+                # Mute: Direct mode, max_output=0 (unmuted)
                 cmais.append(build_cmai(idx, 0, CMD_SLOT_MUTE,
                     build_cmad_button(
                         target=tgt,
                         interaction_mode=2,
                         max_output=0,
-                        trigger_release=1,
+                        trigger_release=0,
                         cond1_mod=cond_mod,
                         cond1_val=cond_val,
                     )))
                 names.append(load_ctrl)
+                idx += 1
+                # FX On: Direct mode, max_output=0 (FX send off)
+                cmais.append(build_cmai(idx, 0, CMD_SLOT_FX_ON,
+                    build_cmad_button(
+                        target=tgt,
+                        interaction_mode=2,
+                        max_output=0,
+                        trigger_release=0,
+                        cond1_mod=cond_mod,
+                        cond1_val=cond_val,
+                    )))
+                names.append(load_ctrl)
+                idx += 1
+
+    # --- Browse.Preview: toggle FX On/Off for all 4 stems of focused deck ---
+    for preview_ctrl, decks in PREVIEW_SIDES:
+        for deck in decks:
+            cond_mod, cond_val = DECK_COND[deck]
+            for slot in range(1, 5):
+                tgt = slot_target(deck, slot)
+                cmais.append(build_cmai(idx, 0, CMD_SLOT_FX_ON,
+                    build_cmad_button(
+                        target=tgt,
+                        interaction_mode=1,  # Toggle
+                        cond1_mod=cond_mod,
+                        cond1_val=cond_val,
+                    )))
+                names.append(preview_ctrl)
                 idx += 1
 
     return cmais, names
@@ -192,7 +237,7 @@ def main():
     all_names = existing_names + reset_names
     print(f"\nMerged total: {len(all_cmais)} entries")
 
-    comment = 'S4 MK3 Stem Load Reset (+DJ NUO Loop In/Out Control)'
+    comment = 'S4 MK3 Stem Load Reset + FX Toggle (+DJ NUO Loop In/Out Control)'
     ddcb = build_ddcb(all_cmais, all_names)
     new_binary = rebuild_tsi(nuo_binary, ddcb, comment)
 

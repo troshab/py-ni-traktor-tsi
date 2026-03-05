@@ -157,6 +157,7 @@ def rebuild_tsi(
     original_binary: bytes,
     new_ddcb: bytes,
     new_comment: str | None = None,
+    new_device_name: str | None = None,
 ) -> bytes:
     """Rebuild TSI binary with new DDCB section, recalculating all TLV lengths.
 
@@ -164,6 +165,7 @@ def rebuild_tsi(
         original_binary: Original TSI binary blob.
         new_ddcb: New DDCB TLV bytes (from build_ddcb).
         new_comment: Optional new DDIC comment string.
+        new_device_name: Optional new device name (shown in Controller Manager).
 
     Returns:
         New complete TSI binary blob.
@@ -173,27 +175,27 @@ def rebuild_tsi(
     new_diom = b''
     for tag, payload, _ in parse_tlv(diom_payload):
         if tag == 'DEVS':
-            new_diom += build_tlv('DEVS', _rebuild_devs(payload, new_ddcb, new_comment))
+            new_diom += build_tlv('DEVS', _rebuild_devs(payload, new_ddcb, new_comment, new_device_name))
         else:
             new_diom += build_tlv(tag, payload)
 
     return build_tlv('DIOM', new_diom)
 
 
-def _rebuild_devs(payload: bytes, new_ddcb: bytes, comment: str | None) -> bytes:
+def _rebuild_devs(payload: bytes, new_ddcb: bytes, comment: str | None, device_name: str | None) -> bytes:
     count = struct.unpack('>I', payload[:4])[0]
     result = struct.pack('>I', count)
     for tag, p, _ in parse_tlv(payload, offset=4):
         if tag == 'DEVI':
-            result += build_tlv('DEVI', _rebuild_devi(p, new_ddcb, comment))
+            result += build_tlv('DEVI', _rebuild_devi(p, new_ddcb, comment, device_name))
         else:
             result += build_tlv(tag, p)
     return result
 
 
-def _rebuild_devi(payload: bytes, new_ddcb: bytes, comment: str | None) -> bytes:
+def _rebuild_devi(payload: bytes, new_ddcb: bytes, comment: str | None, device_name: str | None) -> bytes:
     name, rest_off = decode_utf16be_str(payload, 0)
-    name_bytes = encode_utf16be_str(name)
+    name_bytes = encode_utf16be_str(device_name if device_name is not None else name)
     rest = b''
     for tag, p, _ in parse_tlv(payload, offset=rest_off):
         if tag == 'DDAT':
